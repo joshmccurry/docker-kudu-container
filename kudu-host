@@ -1,0 +1,67 @@
+
+
+# Indicates that the windowsservercore image will be used as the base image.
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+
+# Metadata indicating an image maintainer.
+LABEL maintainer="joshmccurry@microsoft.com"
+
+
+
+RUN @"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -InputFormat None -ExecutionPolicy Bypass -Command "iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))" && SET "PATH=%PATH%;%ALLUSERSPROFILE%\chocolatey\bin"
+RUN choco install nodejs -y
+RUN choco install git -y
+RUN choco install nuget.commandline -y
+RUN choco install netfx-4.5.2-devpack -y
+RUN choco install netfx-4.6-devpack -y
+RUN choco install netfx-4.7.2-devpack -y
+RUN choco install dotnet-6.0-sdk -y
+RUN choco install dotnet-6.0-runtime -y
+RUN choco install dotnet-6.0-aspnetruntime -y
+
+RUN choco install visualstudio2022enterprise -y
+RUN choco install visualstudio2022-workload-azure -y
+RUN choco install visualstudio2022-workload-data -y
+#RUN choco install visualstudio2022-workload-manageddesktop -y
+#RUN choco install visualstudio2022-workload-netweb -y
+RUN choco install visualstudio2022-workload-node -y
+RUN choco install visualstudio2022-workload-visualstudioextension -y
+
+#Install IIS 
+RUN @"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -Command "$collection = Get-WindowsOptionalFeature -Online | where FeatureName -like 'IIS-*'; FOREACH ($item in $collection){ $fname = $item.FeatureName; Write-Output "Enabling: "$fname; Enable-WindowsOptionalFeature -Online -FeatureName $fname;}; iisreset"
+RUN @"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -Command "Enable-WindowsOptionalFeature -Online -FeatureName \
+#WAS-WindowsActivationService,\
+#WAS-ProcessModel,\
+#WAS-NetFxEnvironment,\
+#WAS-ConfigurationAPI, \
+MicrosoftWindowsPowerShell"
+
+RUN choco install dotnetcore-windowshosting -y
+
+
+#RUN curl -SL --output vs_buildtools.exe https://aka.ms/vs/17/release/vs_buildtools.exe
+#RUN start /w vs_buildtools.exe --quiet --wait --norestart --nocache --installPath "%ProgramFiles(x86)%\Microsoft Visual Studio\2019\BuildTools" --add Microsoft.VisualStudio.Workload.WebBuildTools
+
+#Clone Project
+RUN git clone https://github.com/projectkudu/kudu.git
+
+#Remove Tests
+RUN @"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -Command "$content = Get-Content -path 'C:\kudu\Build\Build.proj'; $newContent = $content -replace 'Build; RunTests; BuildSites;', 'Build; BuildSites;'; $newContent | Set-Content -path 'C:\kudu\Build\Build.proj'"
+
+RUN cd "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin" && \
+msbuild.exe c:\kudu\Build\Build.proj /p:Configuration="Release";ExcludeXmlAssemblyFiles=false /v:M /fl /flp:LogFile=c:\kudu\msbuild.log;Verbosity=Normal /nr:false /m
+
+#Empty wwwroot 
+RUN del /q c:\inetpub\wwwroot\*.*
+
+RUN xcopy /s /Y C:\kudu\artifacts\Release\KuduWeb\ "C:\inetpub\wwwroot\"
+RUN xcopy /s /Y C:\kudu\artifacts\Release\SiteExtensions\Kudu\ "C:\inetpub\Kudu.Services.Web\"
+
+RUN %windir%\system32\inetsrv\appcmd.exe set AppPool DefaultAppPool -processModel.identityType:LocalSystem
+
+RUN mkdir C;\inetpub\apps
+RUN icacls "C:\inetpub\apps" /grant IIS_IUSRS:F
+
+# Sets a command or process that will run each time a container is run from the new image.
+CMD [ "cmd" ]
+
